@@ -3,6 +3,8 @@ from flask import Blueprint, request, session, current_app
 from utils.responses import success_response
 from utils.error_handlers import ValidationError
 from utils.validators import (
+    validate_register_payload,
+    validate_login_payload,
     validate_admin_create_user_payload,
     validate_admin_update_user_payload,
     validate_role_payload,
@@ -12,6 +14,116 @@ from utils.decorators import login_required, admin_required
 from services import admin_service
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/admin")
+
+
+# --- Autenticación de administrador ---
+
+@admin_bp.route("/register", methods=["POST"])
+@login_required
+@admin_required
+def register_admin():
+    """
+    Registrar un nuevo administrador
+    ---
+    tags:
+      - Admin - Autenticación
+    security:
+      - cookieAuth: []
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        required: true
+        description: >
+          Mismos campos que el registro público (POST /auth/register), pero
+          la cuenta creada siempre queda con role='admin'. Solo un
+          administrador ya autenticado puede registrar a otro.
+        schema:
+          type: object
+          required: [name, email, password]
+          properties:
+            name: {type: string, example: "Carla Méndez"}
+            email: {type: string, example: "carla.admin@example.com"}
+            password: {type: string, example: "SuperSecret123"}
+            birth_date: {type: string, example: "1990-02-10"}
+            gender: {type: string, enum: [male, female, other]}
+            weight: {type: number, example: 62.5}
+            height: {type: number, example: 168}
+    responses:
+      201:
+        description: Administrador registrado exitosamente
+      401:
+        description: No autenticado
+      403:
+        description: Requiere privilegios de administrador
+      409:
+        description: El correo ya está registrado
+      422:
+        description: Error de validación
+    """
+    data = request.get_json(silent=True) or {}
+    errors = validate_register_payload(data)
+    if errors:
+        raise ValidationError("Datos de registro inválidos.", errors=errors)
+
+    admin = admin_service.register_admin(
+        data, current_app.config["BCRYPT_ROUNDS"], actor_id=session.get("user_id"),
+    )
+    return success_response("Administrador registrado exitosamente.", data=admin, status_code=201)
+
+
+@admin_bp.route("/login", methods=["POST"])
+def admin_login():
+    """
+    Iniciar sesión como administrador
+    ---
+    tags:
+      - Admin - Autenticación
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required: [email, password]
+          properties:
+            email: {type: string, example: "admin@example.com"}
+            password: {type: string, example: "SuperSecret123"}
+    responses:
+      200:
+        description: Sesión de administrador iniciada. Se establece una cookie de sesión segura.
+      401:
+        description: Credenciales inválidas o cuenta deshabilitada
+      403:
+        description: Las credenciales son correctas pero la cuenta no tiene rol de administrador
+      422:
+        description: Error de validación
+    """
+    data = request.get_json(silent=True) or {}
+    errors = validate_login_payload(data)
+    if errors:
+        raise ValidationError("Datos de inicio de sesión inválidos.", errors=errors)
+
+    admin = admin_service.login_admin(data)
+    return success_response("Sesión de administrador iniciada exitosamente.", data=admin)
+
+
+@admin_bp.route("/logout", methods=["POST"])
+def admin_logout():
+    """
+    Cerrar sesión de administrador
+    ---
+    tags:
+      - Admin - Autenticación
+    responses:
+      200:
+        description: Sesión cerrada exitosamente
+    """
+    admin_service.logout_admin()
+    return success_response("Sesión de administrador cerrada exitosamente.")
 
 
 # --- CRUD de usuarios ---

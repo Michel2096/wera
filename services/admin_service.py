@@ -3,6 +3,7 @@ from datetime import datetime, timedelta, timezone
 
 from bson import ObjectId
 from bson.errors import InvalidId
+from flask import session
 
 from database.mongo import (
     users_collection,
@@ -12,8 +13,8 @@ from database.mongo import (
 )
 from models.user import build_user_document, serialize_user
 from models.activity_log import serialize_activity_log
-from services.auth_service import _hash_password
-from utils.error_handlers import NotFoundError, ConflictError
+from services.auth_service import _hash_password, _verify_password
+from utils.error_handlers import NotFoundError, ConflictError, AuthenticationError, AuthorizationError
 from utils.logger import log_activity
 
 
@@ -29,6 +30,58 @@ def _admin_count(exclude_user_id: str = None) -> int:
     if exclude_user_id:
         query["_id"] = {"$ne": _to_object_id(exclude_user_id)}
     return users_collection().count_documents(query)
+
+
+# --- Autenticación de administrador ---
+
+def login_admin(data: dict) -> dict:
+    """
+    Login exclusivo para administradores. Verifica credenciales igual que
+    el login público, pero además exige role='admin': un usuario regular
+    con contraseña correcta recibe 403, no una sesión.
+    """
+    email = data["email"].strip().lower()
+    user_doc = users_collection().find_one({"email": email})
+
+    if not user_doc or not _verify_password(data["password"], user_doc["password_hash"]):
+        raise AuthenticationError("Correo o contraseña incorrectos.")
+
+    if user_doc.get("role") != "admin":
+        raise AuthorizationError("Esta cuenta no tiene privilegios de administrador.")
+
+    if not user_doc.get("is_active", True):
+        raise AuthenticationError("Esta cuenta ha sido deshabilitada. Contacta a otro administrador.")
+
+    session.clear()
+    session["user_id"] = str(user_doc["_id"])
+    session["email"] = user_doc["email"]
+    session["role"] = user_doc["role"]
+    session.permanent = True
+
+    log_activity(str(user_doc["_id"]), "admin_login")
+
+    return serialize_user(user_doc)
+
+
+def logout_admin() -> None:
+    user_id = session.get("user_id")
+    session.clear()
+    if user_id:
+        log_activity(user_id, "admin_logout")
+
+
+def register_admin(data: dict, bcrypt_rounds: int = 12, actor_id: str = None) -> dict:
+    """
+    Registra una nueva cuenta con role='admin'. A diferencia de
+    auth_service.register_user (registro público, siempre role='user'),
+    esta función fuerza role='admin' sin importar lo que envíe el
+    llamador, y solo debe exponerse detrás de una ruta protegida con
+    @admin_required (un admin registra a otro).
+    """
+    payload = dict(data)
+    payload["role"] = "admin"
+    payload.setdefault("is_active", True)
+    return create_user(payload, bcrypt_rounds, actor_id=actor_id)
 
 
 # --- CRUD de usuarios ---
