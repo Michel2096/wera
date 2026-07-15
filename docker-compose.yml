@@ -1,0 +1,45 @@
+version: "3.9"
+
+services:
+  health-monitor-api:
+    build: .
+    container_name: health_monitor_api
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    env_file:
+      - .env
+    environment:
+      - FLASK_ENV=production
+      - HOST=0.0.0.0
+      - PORT=5000
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - health-monitor-net
+
+# Nota: MongoDB Atlas es un servicio administrado en la nube, por lo que
+# NO se define un contenedor de MongoDB aquí. Solo se requiere que la
+# variable MONGO_URI (en tu archivo .env) apunte a tu clúster de Atlas.
+#
+# Si deseas usar un MongoDB local para desarrollo (en vez de Atlas),
+# descomenta el siguiente servicio y ajusta MONGO_URI a
+# "mongodb://mongo:27017":
+#
+#  mongo:
+#    image: mongo:7
+#    container_name: health_monitor_mongo_dev
+#    restart: unless-stopped
+#    ports:
+#      - "27017:27017"
+#    volumes:
+#      - mongo_data:/data/db
+#    networks:
+#      - health-monitor-net
+
+networks:
+  health-monitor-net:
+    driver: bridge
+
+volumes:
+  mongo_data:
