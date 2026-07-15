@@ -129,6 +129,78 @@ def validate_qr_scan_payload(data: dict) -> list:
     return errors
 
 
+def validate_admin_create_user_payload(data: dict) -> list:
+    errors = validate_register_payload(data)
+
+    role = data.get("role", "user")
+    if role not in ("user", "admin"):
+        errors.append("El campo 'role' debe ser 'user' o 'admin'.")
+
+    is_active = data.get("is_active", True)
+    if not isinstance(is_active, bool):
+        errors.append("El campo 'is_active' debe ser booleano.")
+
+    return errors
+
+
+def validate_admin_update_user_payload(data: dict) -> list:
+    errors = []
+    if not data:
+        return ["El cuerpo de la solicitud está vacío."]
+
+    allowed_fields = {
+        "name", "email", "password", "birth_date", "gender",
+        "weight", "height", "role", "is_active",
+    }
+    unknown = set(data.keys()) - allowed_fields
+    if unknown:
+        errors.append(f"Campos no permitidos: {', '.join(unknown)}")
+
+    if "name" in data and (not data["name"] or len(data["name"].strip()) < 2):
+        errors.append("El campo 'name' debe tener mínimo 2 caracteres.")
+
+    if "email" in data and not EMAIL_REGEX.match(data.get("email") or ""):
+        errors.append("El campo 'email' debe tener formato válido.")
+
+    if "password" in data and data["password"] and len(data["password"]) < 8:
+        errors.append("El campo 'password' debe tener mínimo 8 caracteres.")
+
+    if "birth_date" in data and data["birth_date"]:
+        try:
+            datetime.strptime(data["birth_date"], "%Y-%m-%d")
+        except ValueError:
+            errors.append("El campo 'birth_date' debe tener formato YYYY-MM-DD.")
+
+    if "gender" in data and data["gender"] not in (None, "male", "female", "other"):
+        errors.append("El campo 'gender' debe ser 'male', 'female' u 'other'.")
+
+    for numeric_field in ("weight", "height"):
+        if numeric_field in data and data[numeric_field] is not None:
+            try:
+                float(data[numeric_field])
+            except (TypeError, ValueError):
+                errors.append(f"El campo '{numeric_field}' debe ser numérico.")
+
+    if "role" in data and data["role"] not in ("user", "admin"):
+        errors.append("El campo 'role' debe ser 'user' o 'admin'.")
+
+    if "is_active" in data and not isinstance(data["is_active"], bool):
+        errors.append("El campo 'is_active' debe ser booleano.")
+
+    return errors
+
+
+def validate_role_payload(data: dict) -> list:
+    errors = []
+    if not data or "role" not in data:
+        return ["El campo 'role' es obligatorio."]
+
+    if data["role"] not in ("user", "admin"):
+        errors.append("El campo 'role' debe ser 'user' o 'admin'.")
+
+    return errors
+
+
 def validate_pagination_params(page, limit):
     errors = []
     try:

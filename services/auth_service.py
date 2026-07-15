@@ -43,6 +43,7 @@ def register_user(data: dict, bcrypt_rounds: int = 12) -> dict:
         gender=data.get("gender"),
         weight=data.get("weight"),
         height=data.get("height"),
+        role="user",  # el registro público nunca puede autoasignarse un rol
     )
 
     result = users_collection().insert_one(user_doc)
@@ -60,10 +61,14 @@ def login_user(data: dict) -> dict:
     if not user_doc or not _verify_password(data["password"], user_doc["password_hash"]):
         raise AuthenticationError("Correo o contraseña incorrectos.")
 
-    # Sesión segura de servidor: solo guardamos el identificador del usuario.
+    if not user_doc.get("is_active", True):
+        raise AuthenticationError("Esta cuenta ha sido deshabilitada. Contacta a un administrador.")
+
+    # Sesión segura de servidor: solo guardamos el identificador y el rol.
     session.clear()
     session["user_id"] = str(user_doc["_id"])
     session["email"] = user_doc["email"]
+    session["role"] = user_doc.get("role", "user")
     session.permanent = True
 
     log_activity(str(user_doc["_id"]), "user_login")

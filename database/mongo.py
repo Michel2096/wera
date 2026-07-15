@@ -51,8 +51,9 @@ def _create_indexes():
     if _db is None:
         return
 
-    # users: email único
+    # users: email único; role para filtros del panel de administración
     _db.users.create_index([("email", ASCENDING)], unique=True)
+    _db.users.create_index([("role", ASCENDING)])
 
     # devices: por usuario y por qr_token
     _db.devices.create_index([("user_id", ASCENDING)])

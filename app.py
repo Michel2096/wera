@@ -3,6 +3,8 @@ import logging
 import eventlet
 eventlet.monkey_patch()
 
+import click
+import bcrypt
 from flask import Flask, redirect
 from flask_cors import CORS
 from flask_session import Session
@@ -20,6 +22,7 @@ from routes.profile_routes import profile_bp
 from routes.health_routes import health_bp
 from routes.device_routes import device_bp
 from routes.dashboard_routes import dashboard_bp
+from routes.admin_routes import admin_bp
 
 from sockets.health_socket import register_socket_handlers
 from services.simulator_service import run_simulation_cycle
@@ -61,6 +64,19 @@ def create_app():
         "static_url_path": "/flasgger_static",
         "swagger_ui": True,
         "specs_route": "/docs/",
+    }, template={
+        "securityDefinitions": {
+            "cookieAuth": {
+                "type": "apiKey",
+                "in": "cookie",
+                "name": app.config["SESSION_COOKIE_NAME"],
+                "description": (
+                    "Autenticación por cookie de sesión (obtenida vía POST /auth/login). "
+                    "Las rutas bajo /admin además requieren que la sesión pertenezca a "
+                    "un usuario con role='admin'."
+                ),
+            }
+        },
     })
 
     # --- Blueprints ---
@@ -69,6 +85,7 @@ def create_app():
     app.register_blueprint(health_bp)
     app.register_blueprint(device_bp)
     app.register_blueprint(dashboard_bp)
+    app.register_blueprint(admin_bp)
 
     @app.route("/")
     def index():
@@ -92,7 +109,55 @@ def create_app():
 
     _start_simulation_background_task(app, logger)
 
+    _register_cli_commands(app)
+
     return app
+
+
+def _register_cli_commands(app):
+    """Comandos de administración vía terminal (fuera de la API HTTP),
+    usados para dar de alta al primer administrador sin exponer ningún
+    endpoint público capaz de autoasignarse el rol 'admin'.
+
+    Uso: flask create-admin
+    """
+
+    @app.cli.command("create-admin")
+    @click.option("--name", prompt=True, help="Nombre completo del administrador.")
+    @click.option("--email", prompt=True, help="Correo del administrador.")
+    @click.option(
+        "--password", prompt=True, hide_input=True, confirmation_prompt=True,
+        help="Contraseña (mínimo 8 caracteres).",
+    )
+    def create_admin(name, email, password):
+        """Crea un nuevo usuario administrador, o promueve a admin uno existente."""
+        from database.mongo import users_collection
+        from models.user import build_user_document
+
+        email_normalized = email.strip().lower()
+        existing = users_collection().find_one({"email": email_normalized})
+
+        if existing:
+            users_collection().update_one(
+                {"_id": existing["_id"]}, {"$set": {"role": "admin", "is_active": True}}
+            )
+            click.echo(f"Usuario existente '{email_normalized}' promovido a administrador.")
+            return
+
+        if len(password) < 8:
+            click.echo("Error: la contraseña debe tener mínimo 8 caracteres.")
+            return
+
+        password_hash = bcrypt.hashpw(
+            password.encode("utf-8"),
+            bcrypt.gensalt(rounds=app.config["BCRYPT_ROUNDS"]),
+        ).decode("utf-8")
+
+        user_doc = build_user_document(
+            name=name, email=email_normalized, password_hash=password_hash, role="admin",
+        )
+        users_collection().insert_one(user_doc)
+        click.echo(f"Administrador '{email_normalized}' creado exitosamente.")
 
 
 def _start_simulation_background_task(app, logger):
